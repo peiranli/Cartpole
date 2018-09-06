@@ -18,7 +18,7 @@ parser.add_argument('--seed', type=int, default=543, metavar='N',
                     help='random seed (default: 543)')
 parser.add_argument('--render', action='store_true',
                     help='render the environment')
-parser.add_argument('--log-interval', type=int, default=50, metavar='N',
+parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='interval between training status logs (default: 10)')
 args = parser.parse_args()
 
@@ -85,43 +85,32 @@ def select_action(state):
     steps_done += 1
     if sample > eps_rate:
         with torch.no_grad():
-            return q_net(state).max(1)[1].view(1, 1)
+            return q_net(state).max(1)[1].view(1)
     else:
-        return torch.tensor([[random.randrange(2)]], device="cpu", dtype=torch.long)
+        return torch.tensor([random.randrange(2)], device="cpu", dtype=torch.long)
 
 def update_net():
     if len(memory) < BATCH_SIZE:
        return
     transitions = memory.sample(BATCH_SIZE)
-    batch = Transition(*zip(*transitions))
-
-    # Compute a mask of non-final states and concatenate the batch elements
-    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)), device="cpu", dtype=torch.uint8)
-    non_final_next_states = [s for s in batch.next_state if s is not None]
-    non_final_next_states = torch.cat(non_final_next_states)
-    state_batch = torch.cat(batch.state)
-    action_batch = torch.cat(batch.action)
-    reward_batch = torch.cat(batch.reward)
-
-    # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
-    # columns of actions taken
-    state_action_values = q_net(state_batch).gather(1, action_batch)
-
-    # Compute V(s_{t+1}) for all next states.
-    next_state_values = torch.zeros(BATCH_SIZE, device="cpu")
-    next_state_values[non_final_mask] = q_net(non_final_next_states).max(1)[0].detach()
-    # Compute the expected Q values
-    expected_state_action_values = (next_state_values * args.gamma) + reward_batch
-
-    # Compute Huber loss
-    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-
-    # Optimize the model
-    optimizer.zero_grad()
-    loss.backward()
-    for param in q_net.parameters():
-        param.grad.data.clamp_(-1, 1)
-    optimizer.step()
+    for i in range(len(transitions)):
+        (state, action, next_state, reward) = transitions[i]
+        if next_state is not None:
+            next_state = torch.from_numpy(next_state).float()
+            next_state_value = torch.max(q_net(next_state)).detach()
+        else:
+            next_state_value = torch.tensor(0, dtype=torch.float, device="cpu")
+        expected_state_action_value = next_state_value * args.gamma + reward
+        state = torch.from_numpy(state).float()
+        state_action_value = q_net(state).gather(-1, action)
+        # Compute Huber loss
+        loss = F.smooth_l1_loss(state_action_value, expected_state_action_value)
+        # Optimize the model
+        optimizer.zero_grad()
+        loss.backward()
+        for param in q_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+        optimizer.step()
 
 
 def main():
@@ -143,6 +132,8 @@ def main():
             # Store the transition in memory
             transition = (state, action, next_state, reward)
             memory.push(transition)
+
+            state = next_state
 
             running_reward = running_reward * 0.99 + t * 0.01
             # Perform one step of the optimization (on the target network)
