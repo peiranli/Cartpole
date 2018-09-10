@@ -71,15 +71,18 @@ class DQN(nn.Module):
 
 eval_net = DQN()
 target_net = DQN()
-optimizer = optim.Adam(eval_net.parameters(), lr=1e-2)
+target_net.load_state_dict(eval_net.state_dict())
+target_net.eval()
+
+optimizer = optim.RMSprop(eval_net.parameters(), lr=0.005)
+#optimizer = optim.Adam(eval_net.parameters(), lr=1e-3)
 memory = ReplayMemory(10000)
 BATCH_SIZE = 128
 EPS_START = 0.9
 EPS_END = 0.05
 EPS_DECAY = 200
-TARGET_REPLACE_ITER = 100
+TARGET_UPDATE = 10
 steps_done = 0
-learn_step_counter = 0
 
 def select_action(state):
     global steps_done
@@ -93,24 +96,27 @@ def select_action(state):
         return LongTensor([[random.randrange(2)]])
 
 def update_net():
-    global learn_step_counter
-    if learn_step_counter % TARGET_REPLACE_ITER == 0:
-        target_net.load_state_dict(eval_net.state_dict())
-    learn_step_counter += 1
     if len(memory) < BATCH_SIZE:
         return
     transitions = memory.sample(BATCH_SIZE)
     batch_state, batch_action, batch_next_state, batch_reward = zip(*transitions)
-
+    non_final_next_states = []
+    non_final_mask = []
+    for i in range(len(batch_next_state)):
+        if batch_next_state[i] is not None:
+            non_final_next_states.append(batch_next_state[i])
+            non_final_mask.append(i)
     batch_state = Variable(torch.cat(batch_state))
     batch_action = Variable(torch.cat(batch_action))
     batch_reward = Variable(torch.cat(batch_reward))
     batch_next_state = Variable(torch.cat(batch_next_state))
+    non_final_next_states = Variable(torch.cat(non_final_next_states))
 
     # current Q values are estimated by NN for all actions
     current_q_values = eval_net(batch_state).gather(1, batch_action)
     # expected Q values are estimated from actions which gives maximum Q value
-    max_next_q_values = target_net(batch_next_state).detach().max(1)[0]
+    max_next_q_values = torch.zeros(BATCH_SIZE, device="cpu")
+    max_next_q_values[non_final_mask] = target_net(non_final_next_states).detach().max(1)[0]
     expected_q_values = batch_reward + (args.gamma * max_next_q_values)
     # loss is measured from error between current and newly expected Q values
     loss = F.smooth_l1_loss(current_q_values, expected_q_values.unsqueeze(1))
@@ -123,7 +129,7 @@ def update_net():
 def main():
     running_reward = 10
     print("reward threshold", env.spec.reward_threshold)
-    for i_episode in count(1):
+    for i_episode in range(100):
         # Initialize the environment and state
         state = env.reset()
         for t in range(10000):
@@ -153,6 +159,9 @@ def main():
             print("Solved! Running reward is now {} and "
                   "the last episode runs to {} time steps!".format(running_reward, t+1))
             break
+        # Update the target network
+        if i_episode % TARGET_UPDATE == 0:
+            target_net.load_state_dict(eval_net.state_dict())
     
     # test
     for i_episode in range(10):
