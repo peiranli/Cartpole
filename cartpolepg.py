@@ -97,10 +97,10 @@ def main():
         update_policy()
         if i_episode % args.log_interval == 0:
             print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
-                i_episode, t, running_reward))
+                i_episode, t+1, running_reward))
         if running_reward > env.spec.reward_threshold:
             print("Solved! Running reward is now {} and "
-                  "the last episode runs to {} time steps!".format(running_reward, t))
+                  "the last episode runs to {} time steps!".format(running_reward, t+1))
             break
     # test
     for i_episode in range(10):
