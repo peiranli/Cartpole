@@ -155,10 +155,7 @@ def main():
         if i_episode % args.log_interval == 0:
             print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
                 i_episode, t+1, running_reward))
-        if running_reward > env.spec.reward_threshold:
-            print("Solved! Running reward is now {} and "
-                  "the last episode runs to {} time steps!".format(running_reward, t+1))
-            break
+        
         # Update the target network
         if i_episode % TARGET_UPDATE == 0:
             target_net.load_state_dict(eval_net.state_dict())
