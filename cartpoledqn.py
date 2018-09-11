@@ -19,8 +19,8 @@ parser.add_argument('--seed', type=int, default=543, metavar='N',
                     help='random seed (default: 543)')
 parser.add_argument('--render', action='store_true',
                     help='render the environment')
-parser.add_argument('--log-interval', type=int, default=10, metavar='N',
-                    help='interval between training status logs (default: 10)')
+parser.add_argument('--log-interval', type=int, default=50, metavar='N',
+                    help='interval between training status logs (default: 50)')
 args = parser.parse_args()
 
 
@@ -74,8 +74,7 @@ target_net = DQN()
 target_net.load_state_dict(eval_net.state_dict())
 target_net.eval()
 
-optimizer = optim.RMSprop(eval_net.parameters(), lr=0.005)
-#optimizer = optim.Adam(eval_net.parameters(), lr=1e-3)
+optimizer = optim.Adam(eval_net.parameters(), lr=1e-3)
 memory = ReplayMemory(10000)
 BATCH_SIZE = 128
 EPS_START = 0.9
@@ -129,7 +128,7 @@ def update_net():
 def main():
     running_reward = 10
     print("reward threshold", env.spec.reward_threshold)
-    for i_episode in range(100):
+    for i_episode in count(1):
         # Initialize the environment and state
         state = env.reset()
         for t in range(10000):
@@ -143,19 +142,21 @@ def main():
             # Store the transition in memory
             transition = (FloatTensor([state]), action, FloatTensor([next_state]), FloatTensor([reward]))
             memory.push(transition)
-
             state = next_state
-
-            running_reward = running_reward * 0.99 + t * 0.01
             # Perform one step of the optimization (on the target network)
             update_net()
             if done:
                 break
-
+        
+        running_reward = running_reward * 0.99 + t * 0.01
+        
         if i_episode % args.log_interval == 0:
             print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
                 i_episode, t+1, running_reward))
-        
+        if running_reward > env.spec.reward_threshold:
+            print("Solved! Running reward is now {} and "
+                  "the last episode runs to {} time steps!".format(running_reward, t+1))
+            break
         # Update the target network
         if i_episode % TARGET_UPDATE == 0:
             target_net.load_state_dict(eval_net.state_dict())
