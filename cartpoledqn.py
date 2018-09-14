@@ -4,7 +4,6 @@ import numpy as np
 import random
 import math
 from itertools import count
-from collections import namedtuple
 
 import torch
 import torch.nn as nn

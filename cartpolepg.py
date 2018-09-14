@@ -18,7 +18,7 @@ parser.add_argument('--seed', type=int, default=543, metavar='N',
 parser.add_argument('--render', action='store_true',
                     help='render the environment')
 parser.add_argument('--log-interval', type=int, default=50, metavar='N',
-                    help='interval between training status logs (default: 10)')
+                    help='interval between training status logs (default: 50)')
 args = parser.parse_args()
 
 
