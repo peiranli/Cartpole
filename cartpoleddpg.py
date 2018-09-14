@@ -88,3 +88,21 @@ class Critic(nn.Module):
             self.l2
         )
         return model(x)
+
+actor = Actor()
+actor_target = Actor()
+actor_target.load_state_dict(actor.state_dict())
+critic = Critic()
+critic_target = Critic()
+critic_target.load_state_dict(critic.state_dict())
+actor_optimizer = optim.Adam(actor.parameters(), lr=1e-2)
+critic_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
+
+memory = ReplayMemory(10000)
+BATCH_SIZE = 128
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 200
+TARGET_UPDATE = 10
+steps_done = 0
+
