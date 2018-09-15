@@ -89,7 +89,8 @@ def select_action(state):
         math.exp(-1. * steps_done / EPS_DECAY)
     steps_done += 1
     if sample > eps_rate:
-        return eval_net(Variable(state, volatile=True).type(FloatTensor)).data.max(1)[1].view(1, 1)
+        with torch.no_grad():
+            return eval_net(Variable(state).type(FloatTensor)).data.max(1)[1].view(1, 1)
     else:
         return LongTensor([[random.randrange(2)]])
 
