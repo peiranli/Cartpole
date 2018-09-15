@@ -54,10 +54,10 @@ Tensor = FloatTensor
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, hidden_size, output_dim):
+    def __init__(self, state_dim, hidden_size, action_dim):
         super(Actor, self).__init__()
         self.l1 = nn.Linear(state_dim, hidden_size)
-        self.l2 = nn.Linear(hidden_size, output_dim)
+        self.l2 = nn.Linear(hidden_size, action_dim)
 
     def forward(self, state):
         model = torch.nn.Sequential(
@@ -69,10 +69,10 @@ class Actor(nn.Module):
         return model(state)
 
 class Critic(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_size, output_dim=1):
+    def __init__(self, state_dim, hidden_size, action_dim):
         super(Critic, self).__init__()
         self.l1 = nn.Linear(state_dim, hidden_size)
-        self.l2 = nn.Linear(hidden_size, output_dim)
+        self.l2 = nn.Linear(hidden_size, action_dim)
 
     def forward(self, state):
         model = torch.nn.Sequential(
@@ -87,8 +87,8 @@ action_dim = env.action_space.n
 actor = Actor(state_dim, 128, action_dim)
 actor_target = Actor(state_dim, 128, action_dim)
 actor_target.load_state_dict(actor.state_dict())
-critic = Critic(state_dim, action_dim, 128)
-critic_target = Critic(state_dim, action_dim, 128)
+critic = Critic(state_dim, 128, action_dim)
+critic_target = Critic(state_dim, 128, action_dim)
 critic_target.load_state_dict(critic.state_dict())
 actor_optimizer = optim.Adam(actor.parameters(), lr=1e-2)
 critic_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
@@ -108,7 +108,8 @@ def select_action(state):
         math.exp(-1. * steps_done / EPS_DECAY)
     steps_done += 1
     if sample > eps_rate:
-        return actor(Variable(state, volatile=True).type(FloatTensor)).data.max(1)[1].view(1, 1)
+        with torch.no_grad():
+            return actor(Variable(state).type(FloatTensor)).data.max(1)[1].view(1, 1)
     else:
         return LongTensor([[random.randrange(2)]])
 
@@ -130,9 +131,9 @@ def update_net():
     non_final_next_states = Variable(torch.cat(non_final_next_states))
 
     # estimate the target q with actor_target network and critic_target network
-    next_action = actor_target(batch_next_state).data.max(1)[1]
+    next_action = actor_target(batch_next_state).detach().max(1)[1]
     max_next_q_values = torch.zeros(BATCH_SIZE, device="cpu")
-    max_next_q_values[non_final_mask] = critic_target(non_final_next_states).gather(1, next_action[non_final_mask])
+    max_next_q_values[non_final_mask] = critic_target(non_final_next_states).gather(1, next_action[non_final_mask].unsqueeze(1)).squeeze(1)
     expected_q_values = batch_reward + args.gamma * max_next_q_values
 
     # update critic network
@@ -150,4 +151,61 @@ def update_net():
     actor_loss = actor_loss.mean()
     actor_loss.backward()
     actor_optimizer.step()
+
+def main():
+    running_reward = 10
+    print("reward threshold", env.spec.reward_threshold)
+    for i_episode in count(1):
+        # Initialize the environment and state
+        state = env.reset()
+        for t in range(10000):
+            # Select and perform an action
+            action = select_action(FloatTensor([state]))
+            next_state, reward, done, _ = env.step(action.item())
+        
+            if done:
+                reward = -1
+
+            # Store the transition in memory
+            transition = (FloatTensor([state]), action, FloatTensor([next_state]), FloatTensor([reward]))
+            memory.push(transition)
+            state = next_state
+            # Perform one step of the optimization (on the target network)
+            update_net()
+            if done:
+                break
+        
+        running_reward = running_reward * 0.99 + t * 0.01
+        
+        if i_episode % args.log_interval == 0:
+            print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
+                i_episode, t+1, running_reward))
+        if running_reward > env.spec.reward_threshold:
+            print("Solved! Running reward is now {} and "
+                  "the last episode runs to {} time steps!".format(running_reward, t+1))
+            break
+        # Update the target network
+        if i_episode % TARGET_UPDATE == 0:
+            actor_target.load_state_dict(actor.state_dict())
+            critic_target.load_state_dict(critic.state_dict())
+    
+    # test
+    for i_episode in range(10):
+        state = env.reset()
+        for t in range(1000):
+            env.render()
+            pred = eval_net(FloatTensor([state]))
+            values = pred.detach().numpy()
+            action = np.argmax(values)
+            state, reward, done, info = env.step(action)
+            if done:
+                print("Episode finished after {} timesteps".format(t+1))
+                break
+
+    env.close()
+
+
+if __name__ == '__main__':
+    main()
+
     
