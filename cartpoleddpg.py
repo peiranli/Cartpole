@@ -132,8 +132,9 @@ def update_net():
 
     # estimate the target q with actor_target network and critic_target network
     next_action = actor_target(batch_next_state).detach().max(1)[1]
+    next_action = Variable(next_action)
     max_next_q_values = torch.zeros(BATCH_SIZE, device="cpu")
-    max_next_q_values[non_final_mask] = critic_target(non_final_next_states).gather(1, next_action[non_final_mask].unsqueeze(1)).squeeze(1)
+    max_next_q_values[non_final_mask] = critic_target(non_final_next_states).gather(1, next_action[non_final_mask].unsqueeze(1)).detach().squeeze(1)
     expected_q_values = batch_reward + args.gamma * max_next_q_values
 
     # update critic network
@@ -147,7 +148,7 @@ def update_net():
     actor_optimizer.zero_grad()
     # accurate action prediction
     current_action = actor(batch_state).detach().max(1)[1]
-    actor_loss = -critic(batch_state).gather(1, current_action)
+    actor_loss = -critic(batch_state).gather(1, current_action.unsqueeze(1))
     actor_loss = actor_loss.mean()
     actor_loss.backward()
     actor_optimizer.step()
