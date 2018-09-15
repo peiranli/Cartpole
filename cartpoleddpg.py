@@ -51,6 +51,7 @@ FloatTensor = torch.FloatTensor
 LongTensor = torch.LongTensor 
 ByteTensor = torch.ByteTensor 
 Tensor = FloatTensor
+eps = np.finfo(np.float32).eps.item()
 
 
 class Actor(nn.Module):
@@ -127,6 +128,7 @@ def update_net():
     batch_state = Variable(torch.cat(batch_state))
     batch_action = Variable(torch.cat(batch_action))
     batch_reward = Variable(torch.cat(batch_reward))
+    batch_reward = (batch_reward - batch_reward.mean()) / (batch_reward.std() + eps)
     batch_next_state = Variable(torch.cat(batch_next_state))
     non_final_next_states = Variable(torch.cat(non_final_next_states))
 
@@ -195,7 +197,7 @@ def main():
         state = env.reset()
         for t in range(1000):
             env.render()
-            pred = eval_net(FloatTensor([state]))
+            pred = actor(FloatTensor([state]))
             values = pred.detach().numpy()
             action = np.argmax(values)
             state, reward, done, info = env.step(action)
