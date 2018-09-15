@@ -146,7 +146,7 @@ def update_net():
     # update actor network
     actor_optimizer.zero_grad()
     # accurate action prediction
-    current_action = actor(batch_state).data.max(1)[1]
+    current_action = actor(batch_state).detach().max(1)[1]
     actor_loss = -critic(batch_state).gather(1, current_action)
     actor_loss = actor_loss.mean()
     actor_loss.backward()
