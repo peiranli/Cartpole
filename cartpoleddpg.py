@@ -12,7 +12,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 from torch.distributions import Categorical
 
-parser = argparse.ArgumentParser(description='Cartpole ddpg')
+parser = argparse.ArgumentParser(description='ddpg')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
                     help='discount factor (default: 0.99)')
 parser.add_argument('--seed', type=int, default=543, metavar='N',
@@ -55,41 +55,46 @@ eps = np.finfo(np.float32).eps.item()
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, hidden_size, action_dim):
+    def __init__(self, state_dim, hidden1, hidden2, action_dim):
         super(Actor, self).__init__()
-        self.l1 = nn.Linear(state_dim, hidden_size)
-        self.l2 = nn.Linear(hidden_size, action_dim)
+        self.l1 = nn.Linear(state_dim, hidden1)
+        self.l2 = nn.Linear(hidden1, hidden2)
+        self.l3 = nn.Linear(hidden2, action_dim)
 
     def forward(self, state):
         model = torch.nn.Sequential(
             self.l1,
             nn.ReLU(),
             self.l2,
-            nn.Softmax(dim=-1)
+            nn.ReLU(),
+            self.l3,
+            nn.Tanh()
         )
         return model(state)
 
 class Critic(nn.Module):
-    def __init__(self, state_dim, hidden_size, action_dim):
+    def __init__(self, state_dim, hidden1, hidden2, action_dim):
         super(Critic, self).__init__()
-        self.l1 = nn.Linear(state_dim, hidden_size)
-        self.l2 = nn.Linear(hidden_size, action_dim)
+        self.l1 = nn.Linear(state_dim, hidden1)
+        self.l2 = nn.Linear(hidden1+action_dim, hidden2)
+        self.l3 = nn.Linear(hidden2, 1)
 
-    def forward(self, state):
-        model = torch.nn.Sequential(
-            self.l1,
-            nn.ReLU(),
-            self.l2
-        )
-        return model(state)
+    def forward(self, state, action):
+        out = self.l1(state)
+        out = nn.functional.relu(out)
+        out = self.l2(torch.cat([out, action], 1))
+        out = nn.functional.relu(out)
+        out = self.l3(out)
+        return out
 
 state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.n
-actor = Actor(state_dim, 128, action_dim)
-actor_target = Actor(state_dim, 128, action_dim)
+print("action dim",action_dim)
+actor = Actor(state_dim, 400, 300, action_dim)
+actor_target = Actor(state_dim, 400, 300, action_dim)
 actor_target.load_state_dict(actor.state_dict())
-critic = Critic(state_dim, 128, action_dim)
-critic_target = Critic(state_dim, 128, action_dim)
+critic = Critic(state_dim, 400, 300, action_dim)
+critic_target = Critic(state_dim, 400, 300, action_dim)
 critic_target.load_state_dict(critic.state_dict())
 actor_optimizer = optim.Adam(actor.parameters(), lr=1e-2)
 critic_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
@@ -101,6 +106,11 @@ EPS_END = 0.05
 EPS_DECAY = 200
 TARGET_UPDATE = 10
 steps_done = 0
+
+def random_action():
+    action = np.random.uniform(-1.,1.,action_dim)
+    return action
+
 
 def select_action(state):
     global steps_done
@@ -128,20 +138,18 @@ def update_net():
     batch_state = Variable(torch.cat(batch_state))
     batch_action = Variable(torch.cat(batch_action))
     batch_reward = Variable(torch.cat(batch_reward))
-    batch_reward = (batch_reward - batch_reward.mean()) / (batch_reward.std() + eps)
     batch_next_state = Variable(torch.cat(batch_next_state))
     non_final_next_states = Variable(torch.cat(non_final_next_states))
 
     # estimate the target q with actor_target network and critic_target network
-    next_action = actor_target(batch_next_state).detach().max(1)[1]
-    next_action = Variable(next_action)
+    next_action = actor_target(batch_next_state)
     max_next_q_values = torch.zeros(BATCH_SIZE, device="cpu")
-    max_next_q_values[non_final_mask] = critic_target(non_final_next_states).gather(1, next_action[non_final_mask].unsqueeze(1)).detach().squeeze(1)
+    max_next_q_values[non_final_mask] = critic_target(non_final_next_states, next_action[non_final_mask]).detach().squeeze(1)
     expected_q_values = batch_reward + args.gamma * max_next_q_values
 
     # update critic network
     critic_optimizer.zero_grad()
-    current_q_values = critic(batch_state).gather(1, batch_action)
+    current_q_values = critic(batch_state, batch_action)
     critic_loss = F.smooth_l1_loss(current_q_values, expected_q_values.unsqueeze(1))
     critic_loss.backward()
     critic_optimizer.step()
@@ -149,8 +157,8 @@ def update_net():
     # update actor network
     actor_optimizer.zero_grad()
     # accurate action prediction
-    current_action = actor(batch_state).detach().max(1)[1]
-    actor_loss = -critic(batch_state).gather(1, current_action.unsqueeze(1))
+    current_action = actor(batch_state)
+    actor_loss = -critic(batch_state,current_action)
     actor_loss = actor_loss.mean()
     actor_loss.backward()
     actor_optimizer.step()
@@ -168,9 +176,8 @@ def main():
         
             if done:
                 reward = -1
-
             # Store the transition in memory
-            transition = (FloatTensor([state]), action, FloatTensor([next_state]), FloatTensor([reward]))
+            transition = (FloatTensor([state]), action.type(FloatTensor), FloatTensor([next_state]), FloatTensor([reward]))
             memory.push(transition)
             state = next_state
             # Perform one step of the optimization (on the target network)

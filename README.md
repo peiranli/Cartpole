@@ -1,3 +1,3 @@
-###### Cartpole
+###### RL
 
-My cartpole agent using various reinforcement learning algorithms.
+My RL agent using various reinforcement learning algorithms.

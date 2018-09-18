@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.distributions import Categorical
 
 
-parser = argparse.ArgumentParser(description='Cartpole policy gradient')
+parser = argparse.ArgumentParser(description='policy gradient')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
                     help='discount factor (default: 0.99)')
 parser.add_argument('--seed', type=int, default=543, metavar='N',
