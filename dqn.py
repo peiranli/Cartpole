@@ -98,25 +98,18 @@ def update_net():
     if len(memory) < BATCH_SIZE:
         return
     transitions = memory.sample(BATCH_SIZE)
-    batch_state, batch_action, batch_next_state, batch_reward = zip(*transitions)
-    non_final_next_states = []
-    non_final_mask = []
-    for i in range(len(batch_next_state)):
-        if batch_next_state[i] is not None:
-            non_final_next_states.append(batch_next_state[i])
-            non_final_mask.append(i)
+    batch_state, batch_action, batch_next_state, batch_reward, batch_done = zip(*transitions)
     batch_state = Variable(torch.cat(batch_state))
     batch_action = Variable(torch.cat(batch_action))
     batch_reward = Variable(torch.cat(batch_reward))
     batch_next_state = Variable(torch.cat(batch_next_state))
-    non_final_next_states = Variable(torch.cat(non_final_next_states))
+    batch_done = Variable(torch.cat(batch_done))
 
     # current Q values are estimated by NN for all actions
     current_q_values = eval_net(batch_state).gather(1, batch_action)
     # expected Q values are estimated from actions which gives maximum Q value
-    max_next_q_values = torch.zeros(BATCH_SIZE, device="cpu")
-    max_next_q_values[non_final_mask] = target_net(non_final_next_states).detach().max(1)[0]
-    expected_q_values = batch_reward + (args.gamma * max_next_q_values)
+    max_next_q_values = target_net(batch_next_state).detach().max(1)[0]
+    expected_q_values = batch_reward + (1.0 - batch_done) * args.gamma * max_next_q_values
     # loss is measured from error between current and newly expected Q values
     loss = F.smooth_l1_loss(current_q_values, expected_q_values.unsqueeze(1))
 
@@ -140,7 +133,7 @@ def main():
                 reward = -1
 
             # Store the transition in memory
-            transition = (FloatTensor([state]), action, FloatTensor([next_state]), FloatTensor([reward]))
+            transition = (FloatTensor([state]), action, FloatTensor([next_state]), FloatTensor([reward]), FloatTensor([done]))
             memory.push(transition)
             state = next_state
             # Perform one step of the optimization (on the target network)
