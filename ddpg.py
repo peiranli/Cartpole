@@ -168,7 +168,6 @@ TARGET_UPDATE = 10
 soft_tau = 1e-2
 min_value = -np.inf
 max_value = np.inf
-steps_done = 0
 
 def update_net():
     if len(memory) < BATCH_SIZE:
@@ -204,6 +203,7 @@ def update_net():
     actor_optimizer.step()
 
 def main():
+    steps_done = 0
     for i_episode in range(MAX_EPISODES):
         # Initialize the environment and state
         state = env.reset()
@@ -211,8 +211,9 @@ def main():
         episode_reward = 0
         for t in range(10000):
             # Select and perform an action
+            steps_done += 1
             action = actor.get_action(FloatTensor([state]))
-            action = ou_noise.get_action(action, t)
+            action = ou_noise.get_action(action, steps_done)
             next_state, reward, done, _ = env.step(action)
     
             # Store the transition in memory
@@ -237,12 +238,14 @@ def main():
     # test
     for i_episode in range(10):
         state = env.reset()
+        episode_reward = 0
         for t in range(1000):
             env.render()
             action = actor.get_action(FloatTensor([state]))
             state, reward, done, _ = env.step(action)
+            episode_reward += reward
             if done:
-                print("Episode finished after {} timesteps".format(t+1))
+                print("Episode reward after {} timesteps".format(episode_reward))
                 break
 
     env.close()
