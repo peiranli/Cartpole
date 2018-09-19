@@ -19,8 +19,8 @@ parser.add_argument('--seed', type=int, default=543, metavar='N',
                     help='random seed (default: 543)')
 parser.add_argument('--render', action='store_true',
                     help='render the environment')
-parser.add_argument('--log-interval', type=int, default=50, metavar='N',
-                    help='interval between training status logs (default: 50)')
+parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+                    help='interval between training status logs (default: 10)')
 args = parser.parse_args()
 
 
@@ -128,8 +128,8 @@ class Critic(nn.Module):
         self.l2 = nn.Linear(hidden_dim+action_dim, hidden_dim)
         self.l3 = nn.Linear(hidden_dim, 1)
 
-        self.linear3.weight.data.uniform_(-init_w, init_w)
-        self.linear3.bias.data.uniform_(-init_w, init_w)
+        self.l3.weight.data.uniform_(-init_w, init_w)
+        self.l3.bias.data.uniform_(-init_w, init_w)
 
     def forward(self, state, action):
         out = self.l1(state)
@@ -159,6 +159,7 @@ actor_optimizer = optim.Adam(actor.parameters(), lr=1e-2)
 critic_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
 
 memory = ReplayMemory(10000)
+MAX_EPISODES = 5000
 BATCH_SIZE = 128
 EPS_START = 0.9
 EPS_END = 0.05
@@ -203,37 +204,28 @@ def update_net():
     actor_optimizer.step()
 
 def main():
-    running_reward = 10
-    print("reward threshold", env.spec.reward_threshold)
-    for i_episode in count(1):
+    for i_episode in range(MAX_EPISODES):
         # Initialize the environment and state
         state = env.reset()
+        ou_noise.reset()
+        episode_reward = 0
         for t in range(10000):
             # Select and perform an action
             action = actor.get_action(FloatTensor([state]))
             action = ou_noise.get_action(action, t)
             next_state, reward, done, _ = env.step(action)
-        
-            if done:
-                reward = -1
+    
             # Store the transition in memory
             transition = (FloatTensor([state]), FloatTensor([action]), FloatTensor([next_state]), FloatTensor([reward]), FloatTensor([done]))
             memory.push(transition)
             state = next_state
             # Perform one step of the optimization (on the target network)
             update_net()
+            episode_reward += reward
             if done:
                 break
-        
-        running_reward = running_reward * 0.99 + t * 0.01
-        
         if i_episode % args.log_interval == 0:
-            print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
-                i_episode, t+1, running_reward))
-        if running_reward > env.spec.reward_threshold:
-            print("Solved! Running reward is now {} and "
-                  "the last episode runs to {} time steps!".format(running_reward, t+1))
-            break
+            print('Episode {}\tReward: {:.2f}'.format(i_episode, episode_reward))
         # Soft update the target network
         if i_episode % TARGET_UPDATE == 0:
             for target_param, param in zip(critic_target.parameters(), critic.parameters()):
