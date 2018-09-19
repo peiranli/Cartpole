@@ -245,7 +245,7 @@ def main():
             state, reward, done, _ = env.step(action)
             episode_reward += reward
             if done:
-                print("Episode reward after {} timesteps".format(episode_reward))
+                print("Episode reward {} after {} timesteps".format(episode_reward, t+1))
                 break
 
     env.close()
