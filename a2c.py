@@ -1,163 +1,134 @@
-import argparse
-import gym
-import numpy as np
-import random
-import math
-from itertools import count
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 from torch.autograd import Variable
-from torch.distributions import Categorical
+from itertools import count
+import numpy as np
+import math
+import random
+import os
+import gym
 
-parser = argparse.ArgumentParser(description='a2c')
-parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
-                    help='discount factor (default: 0.99)')
-parser.add_argument('--seed', type=int, default=543, metavar='N',
-                    help='random seed (default: 543)')
-parser.add_argument('--render', action='store_true',
-                    help='render the environment')
-parser.add_argument('--log-interval', type=int, default=50, metavar='N',
-                    help='interval between training status logs (default: 50)')
-args = parser.parse_args()
-
+# Hyper Parameters
+STATE_DIM = 4
+ACTION_DIM = 2
+SAMPLE_NUMS = 1000
 
 FloatTensor = torch.FloatTensor
 LongTensor = torch.LongTensor 
 ByteTensor = torch.ByteTensor 
 Tensor = FloatTensor
 
-class Actor(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim):
-        super(Actor, self).__init__()
-        self.l1 = nn.Linear(state_dim, hidden_dim)
-        self.l2 = nn.Linear(hidden_dim, hidden_dim)
-        self.l3 = nn.Linear(hidden_dim, action_dim)
+class ActorNetwork(nn.Module):
 
-        self.saved_log_probs = []
-        self.rewards = []
+    def __init__(self,input_size,hidden_size,action_size):
+        super(ActorNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_size,hidden_size)
+        self.fc2 = nn.Linear(hidden_size,hidden_size)
+        self.fc3 = nn.Linear(hidden_size,action_size)
 
-    def forward(self, state):
-        model = torch.nn.Sequential(
-            self.l1,
-            nn.ReLU(),
-            self.l2,
-            nn.ReLU(),
-            self.l3,
-            nn.Softmax(1)
-        )
-        return model(state)
+    def forward(self,x):
+        out = F.relu(self.fc1(x))
+        out = F.relu(self.fc2(out))
+        out = F.log_softmax(self.fc3(out), dim=1)
+        return out
 
-class Critic(nn.Module):
-    def __init__(self, state_dim, hidden_dim):
-        super(Critic, self).__init__()
-        self.l1 = nn.Linear(state_dim, hidden_dim)
-        self.l2 = nn.Linear(hidden_dim, hidden_dim)
-        self.l3 = nn.Linear(hidden_dim, 1)
+class ValueNetwork(nn.Module):
 
-        self.values = []
+    def __init__(self,input_size,hidden_size,output_size):
+        super(ValueNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_size,hidden_size)
+        self.fc2 = nn.Linear(hidden_size,hidden_size)
+        self.fc3 = nn.Linear(hidden_size,output_size)
 
-    def forward(self, state):
-        model = torch.nn.Sequential(
-            self.l1,
-            nn.ReLU(),
-            self.l2,
-            nn.ReLU(),
-            self.l3
-        )
-        return model(state)
+    def forward(self,x):
+        out = F.relu(self.fc1(x))
+        out = F.relu(self.fc2(out))
+        out = self.fc3(out)
+        return out
 
-env = gym.make('CartPole-v0')
-env.seed(args.seed)
-torch.manual_seed(args.seed)
-eps = np.finfo(np.float32).eps.item()
+# init value network
+value_network = ValueNetwork(input_size = STATE_DIM,hidden_size = 64,output_size = 1)
+value_network_optim = torch.optim.Adam(value_network.parameters(),lr=0.01)
 
-state_dim = env.observation_space.shape[0]
-action_dim = env.action_space.n
-hidden_dim = 256
+# init actor network
+actor_network = ActorNetwork(STATE_DIM,64,ACTION_DIM)
+actor_network_optim = torch.optim.Adam(actor_network.parameters(),lr = 0.01)
 
-actor = Actor(state_dim, hidden_dim, action_dim)
-critic = Critic(state_dim, hidden_dim)
+def roll_out(actor_network,task,sample_nums,value_network):
+    state = task.reset()
+    states = []
+    actions = []
+    rewards = []
 
-actor_optimizer = optim.Adam(actor.parameters(), lr=1e-2)
-critic_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
+    for step in range(sample_nums):
+        states.append(state)
+        log_softmax_action = actor_network(Variable(torch.Tensor([state])))
+        softmax_action = torch.exp(log_softmax_action)
+        action = np.random.choice(ACTION_DIM,p=softmax_action.cpu().data.numpy()[0])
+        one_hot_action = [int(k == action) for k in range(ACTION_DIM)]
+        next_state,reward,done,_ = task.step(action)
+        actions.append(one_hot_action)
+        rewards.append(reward)
+        state = next_state
+        if done:
+            break
 
-def select_action(state):
-    probs = actor(state)
-    m = Categorical(probs)
-    action = m.sample()
-    actor.saved_log_probs.append(m.log_prob(action))
-    return action.item()
+    return states,actions,rewards,step
 
-def compute_returns(rewards, final_reward):
-    R = final_reward
-    res = []
-    for t in reversed(range(len(rewards))):
-        R = R * args.gamma + rewards[t]
-        res.insert(0, R)
-    return res
+def update_network(states, actions, rewards):
+        actions_var = Variable(FloatTensor(actions).view(-1,ACTION_DIM))
+        states_var = Variable(FloatTensor(states).view(-1,STATE_DIM))
 
-def update_net(final_reward):
-    actor_loss = []
-    rewards = compute_returns(actor.rewards, final_reward)
-    rewards = torch.cat(rewards).detach()
-    for log_prob, reward, value in zip(actor.saved_log_probs, rewards, critic.values):
-        actor_loss.append(-log_prob * (reward - value))
-    values = torch.cat(critic.values)
-    actor_optimizer.zero_grad()
-    actor_loss = torch.cat(actor_loss).sum()
-    actor_loss.backward(retain_graph=True)
-    actor_optimizer.step()
+        # train actor network
+        actor_network_optim.zero_grad()
+        log_softmax_actions = actor_network(states_var)
+        vs = value_network(states_var).detach()
+        # calculate qs
+        qs = Variable(torch.Tensor(discount_reward(rewards,0.99)))
 
-    advantages = rewards - values
-    critic_loss = advantages.pow(2).mean()
-    critic_loss.backward()
-    critic_optimizer.step()
+        advantages = qs - vs
+        actor_network_loss = - torch.mean(torch.sum(log_softmax_actions*actions_var,1)* advantages)
+        actor_network_loss.backward()
+        actor_network_optim.step()
 
-    del actor.rewards[:]
-    del actor.saved_log_probs[:]
-    del critic.values[:]
+        # train value network
+        value_network_optim.zero_grad()
+        target_values = qs
+        values = value_network(states_var)
+        criterion = nn.MSELoss()
+        value_network_loss = criterion(values,target_values.unsqueeze(1))
+        value_network_loss.backward()
+        value_network_optim.step()
 
+
+def discount_reward(r, gamma):
+    discounted_r = np.zeros_like(r)
+    running_add = 0
+    for t in reversed(range(0, len(r))):
+        running_add = running_add * gamma + r[t]
+        discounted_r[t] = running_add
+    return discounted_r
 
 def main():
+    # init a task generator for data fetching
+    env = gym.make("CartPole-v0")
     running_reward = 10
     print("reward threshold", env.spec.reward_threshold)
+    
+
     for i_episode in count(1):
-        state = env.reset()
-        for t in range(10000):  # Don't infinite loop while learning
-            action = select_action(FloatTensor([state]))
-            value = critic(FloatTensor([state]))
-            state, reward, done, _ = env.step(action)
-            actor.rewards.append(reward)
-            critic.values.append(value)
-            if done:
-                break
-        final_reward = critic()
-        running_reward = running_reward * 0.99 + t * 0.01
-        update_net(final_reward)
-        if i_episode % args.log_interval == 0:
+        states,actions,rewards,steps = roll_out(actor_network,env,SAMPLE_NUMS,value_network)
+        running_reward = running_reward * 0.99 + steps * 0.01
+        update_network(states,actions,rewards)
+        
+        if i_episode % 50 == 0:
             print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
-                i_episode, t+1, running_reward))
+                i_episode, steps+1, running_reward))
         if running_reward > env.spec.reward_threshold:
             print("Solved! Running reward is now {} and "
-                  "the last episode runs to {} time steps!".format(running_reward, t+1))
+                  "the last episode runs to {} time steps!".format(running_reward, steps+1))
             break
-    # test
-    for i_episode in range(10):
-        state = env.reset()
-        for t in range(1000):
-            env.render()
-            pred = actor(FloatTensor([state]))
-            values = pred.detach().numpy()
-            action = np.argmax(values)
-            state, reward, done, _ = env.step(action)
-            if done:
-                print("Episode finished after {} timesteps".format(t+1))
-                break
-
-    env.close()
 
 if __name__ == '__main__':
     main()
