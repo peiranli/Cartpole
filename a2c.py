@@ -55,19 +55,22 @@ value_network_optim = torch.optim.Adam(value_network.parameters(),lr=0.01)
 actor_network = ActorNetwork(STATE_DIM,64,ACTION_DIM)
 actor_network_optim = torch.optim.Adam(actor_network.parameters(),lr = 0.01)
 
-def roll_out(actor_network,task,sample_nums,value_network):
-    state = task.reset()
+# init a task generator for data fetching
+env = gym.make("CartPole-v0")
+
+def roll_out():
+    state = env.reset()
     states = []
     actions = []
     rewards = []
 
-    for step in range(sample_nums):
+    for step in range(SAMPLE_NUMS):
         states.append(state)
         log_softmax_action = actor_network(Variable(torch.Tensor([state])))
         softmax_action = torch.exp(log_softmax_action)
         action = np.random.choice(ACTION_DIM,p=softmax_action.cpu().data.numpy()[0])
         one_hot_action = [int(k == action) for k in range(ACTION_DIM)]
-        next_state,reward,done,_ = task.step(action)
+        next_state,reward,done,_ = env.step(action)
         actions.append(one_hot_action)
         rewards.append(reward)
         state = next_state
@@ -111,14 +114,11 @@ def discount_reward(r, gamma):
     return discounted_r
 
 def main():
-    # init a task generator for data fetching
-    env = gym.make("CartPole-v0")
     running_reward = 10
     print("reward threshold", env.spec.reward_threshold)
-    
 
     for i_episode in count(1):
-        states,actions,rewards,steps = roll_out(actor_network,env,SAMPLE_NUMS,value_network)
+        states,actions,rewards,steps = roll_out()
         running_reward = running_reward * 0.99 + steps * 0.01
         update_network(states,actions,rewards)
         
