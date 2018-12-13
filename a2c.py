@@ -82,7 +82,6 @@ def roll_out():
 def update_network(states, actions, rewards):
         actions_var = Variable(FloatTensor(actions).view(-1,ACTION_DIM))
         states_var = Variable(FloatTensor(states).view(-1,STATE_DIM))
-
         # train actor network
         actor_network_optim.zero_grad()
         log_softmax_actions = actor_network(states_var)
@@ -129,6 +128,20 @@ def main():
             print("Solved! Running reward is now {} and "
                   "the last episode runs to {} time steps!".format(running_reward, steps+1))
             break
+    # test
+    for i_episode in range(10):
+        state = env.reset()
+        for t in range(1000):
+            env.render()
+            pred = actor_network(FloatTensor([state]))
+            values = pred.detach().numpy()
+            action = np.argmax(values)
+            state, reward, done, info = env.step(action)
+            if done:
+                print("Episode finished after {} timesteps".format(t+1))
+                break
+
+    env.close()
 
 if __name__ == '__main__':
     main()
