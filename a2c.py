@@ -9,7 +9,7 @@ import random
 import os
 import gym
 
-# Hyper Parameters
+## Hyper Parameters
 STATE_DIM = 4
 ACTION_DIM = 2
 SAMPLE_NUMS = 1000
