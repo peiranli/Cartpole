@@ -13,7 +13,7 @@ import gym
 STATE_DIM = 4
 ACTION_DIM = 2
 SAMPLE_NUMS = 1000
-TARGET_UPDATE_STEP = 5
+TARGET_UPDATE_STEP = 10
 CLIP_PARAM=0.2
 
 FloatTensor = torch.FloatTensor
