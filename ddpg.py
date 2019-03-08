@@ -174,22 +174,22 @@ def update_net():
         return
     transitions = memory.sample(BATCH_SIZE)
     batch_state, batch_action, batch_next_state, batch_reward, batch_done = zip(*transitions)
-    batch_state = Variable(torch.cat(batch_state))
-    batch_action = Variable(torch.cat(batch_action))
-    batch_reward = Variable(torch.cat(batch_reward))
-    batch_next_state = Variable(torch.cat(batch_next_state))
-    batch_done = Variable(torch.cat(batch_done))
+    batch_state = Variable(torch.cat(batch_state)).view(-1,state_dim)
+    batch_action = Variable(torch.cat(batch_action)).view(-1,action_dim)
+    batch_reward = Variable(torch.cat(batch_reward)).view(-1, 1)
+    batch_next_state = Variable(torch.cat(batch_next_state)).view(-1, state_dim)
+    batch_done = Variable(torch.cat(batch_done)).view(-1, 1)
 
     # estimate the target q with actor_target network and critic_target network
     next_action = actor_target(batch_next_state)
-    max_next_q_values = critic_target(batch_next_state, next_action).detach().squeeze(1)
+    max_next_q_values = critic_target(batch_next_state, next_action.detach())
     expected_q_values = batch_reward + (1.0 - batch_done) * args.gamma * max_next_q_values
     expected_q_values = torch.clamp(expected_q_values, min_value, max_value)
 
     # update critic network
     critic_optimizer.zero_grad()
     current_q_values = critic(batch_state, batch_action)
-    critic_loss = F.smooth_l1_loss(current_q_values, expected_q_values.unsqueeze(1))
+    critic_loss = nn.MSELoss()(current_q_values, expected_q_values.detach())
     critic_loss.backward()
     critic_optimizer.step()
 
@@ -197,13 +197,13 @@ def update_net():
     actor_optimizer.zero_grad()
     # accurate action prediction
     current_action = actor(batch_state)
-    actor_loss = -critic(batch_state,current_action)
-    actor_loss = actor_loss.mean()
+    actor_loss = -torch.sum(critic(batch_state,current_action))
     actor_loss.backward()
     actor_optimizer.step()
 
 def main():
     steps_done = 0
+    rewards = []
     for i_episode in range(MAX_EPISODES):
         # Initialize the environment and state
         state = env.reset()
@@ -212,21 +212,24 @@ def main():
         for t in range(10000):
             # Select and perform an action
             steps_done += 1
-            action = actor.get_action(FloatTensor([state]))
+            action = actor.get_action(Variable(FloatTensor([state])))
             action = ou_noise.get_action(action, steps_done)
             next_state, reward, done, _ = env.step(action)
-    
+
             # Store the transition in memory
-            transition = (FloatTensor([state]), FloatTensor([action]), FloatTensor([next_state]), FloatTensor([reward]), FloatTensor([done]))
+            transition = (FloatTensor(state), FloatTensor(action), FloatTensor(next_state), FloatTensor([reward]), FloatTensor([done]))
             memory.push(transition)
             state = next_state
             # Perform one step of the optimization (on the target network)
             update_net()
             episode_reward += reward
+            rewards.append(episode_reward)
             if done:
                 break
         if i_episode % args.log_interval == 0:
-            print('Episode {}\tReward: {:.2f}'.format(i_episode, episode_reward))
+            average_reward = sum(rewards) / len(rewards)
+            print('Episode {}\tReward: {:.2f}'.format(i_episode, average_reward))
+            rewards = []
         # Soft update the target network
         if i_episode % TARGET_UPDATE == 0:
             for target_param, param in zip(critic_target.parameters(), critic.parameters()):
