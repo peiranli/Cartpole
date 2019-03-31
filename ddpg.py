@@ -1,28 +1,27 @@
-import argparse
-import gym
-import numpy as np
-import random
-import math
-from itertools import count
+from __future__ import division
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
-from torch.distributions import Categorical
 
-parser = argparse.ArgumentParser(description='ddpg')
-parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
-                    help='discount factor (default: 0.99)')
-parser.add_argument('--seed', type=int, default=543, metavar='N',
-                    help='random seed (default: 543)')
-parser.add_argument('--render', action='store_true',
-                    help='render the environment')
-parser.add_argument('--log-interval', type=int, default=10, metavar='N',
-                    help='interval between training status logs (default: 10)')
-args = parser.parse_args()
+import gym
+import numpy as np
+import random
+import math
+from itertools import count
 
+BATCH_SIZE = 128
+LEARNING_RATE = 0.001
+GAMMA = 0.99
+TAU = 0.001
+
+
+FloatTensor = torch.FloatTensor
+LongTensor = torch.LongTensor 
+ByteTensor = torch.ByteTensor 
+Tensor = FloatTensor
 
 
 class ReplayMemory(object):
@@ -44,217 +43,285 @@ class ReplayMemory(object):
 
     def __len__(self):
         return len(self.memory)
+	
 
-FloatTensor = torch.FloatTensor
-LongTensor = torch.LongTensor 
-ByteTensor = torch.ByteTensor 
-Tensor = FloatTensor
+def soft_update(target, source, tau):
+	"""
+	Copies the parameters from source network (x) to target network (y) using the below update
+	y = TAU*x + (1 - TAU)*y
+	:param target: Target network (PyTorch)
+	:param source: Source network (PyTorch)
+	:return:
+	"""
+	for target_param, param in zip(target.parameters(), source.parameters()):
+		target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
 
-class NormalizedActions(gym.ActionWrapper):
 
-    def _action(self, action):
-        low_bound   = self.action_space.low
-        upper_bound = self.action_space.high
-        
-        action = low_bound + (action + 1.0) * 0.5 * (upper_bound - low_bound)
-        action = np.clip(action, low_bound, upper_bound)
-        
-        return action
+def hard_update(target, source):
+	"""
+	Copies the parameters from source network to target network
+	:param target: Target network (PyTorch)
+	:param source: Source network (PyTorch)
+	:return:
+	"""
+	for target_param, param in zip(target.parameters(), source.parameters()):
+			target_param.data.copy_(param.data)
 
-    def _reverse_action(self, action):
-        low_bound   = self.action_space.low
-        upper_bound = self.action_space.high
-        
-        action = 2 * (action - low_bound) / (upper_bound - low_bound) - 1
-        action = np.clip(action, low_bound, upper_bound)
-        
-        return action
 
-#https://github.com/vitchyr/rlkit/blob/master/rlkit/exploration_strategies/ou_strategy.py
-class OUNoise(object):
-    def __init__(self, action_space, mu=0.0, theta=0.15, max_sigma=0.3, min_sigma=0.3, decay_period=100000):
-        self.mu           = mu
-        self.theta        = theta
-        self.sigma        = max_sigma
-        self.max_sigma    = max_sigma
-        self.min_sigma    = min_sigma
-        self.decay_period = decay_period
-        self.action_dim   = action_space.shape[0]
-        self.low          = action_space.low
-        self.high         = action_space.high
-        self.reset()
-        
-    def reset(self):
-        self.state = np.ones(self.action_dim) * self.mu
-        
-    def evolve_state(self):
-        x  = self.state
-        dx = self.theta * (self.mu - x) + self.sigma * np.random.randn(self.action_dim)
-        self.state = x + dx
-        return self.state
-    
-    def get_action(self, action, t=0):
-        ou_state = self.evolve_state()
-        self.sigma = self.max_sigma - (self.max_sigma - self.min_sigma) * min(1.0, t / self.decay_period)
-        return np.clip(action + ou_state, self.low, self.high)
-    
+# Based on http://math.stackexchange.com/questions/1287634/implementing-ornstein-uhlenbeck-in-matlab
+class OrnsteinUhlenbeckActionNoise:
 
-class Actor(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim):
-        super(Actor, self).__init__()
-        self.l1 = nn.Linear(state_dim, hidden_dim)
-        self.l2 = nn.Linear(hidden_dim, hidden_dim)
-        self.l3 = nn.Linear(hidden_dim, action_dim)
+	def __init__(self, action_dim, mu = 0, theta = 0.15, sigma = 0.2):
+		self.action_dim = action_dim
+		self.mu = mu
+		self.theta = theta
+		self.sigma = sigma
+		self.X = np.ones(self.action_dim) * self.mu
 
-    def forward(self, state):
-        model = torch.nn.Sequential(
-            self.l1,
-            nn.ReLU(),
-            self.l2,
-            nn.ReLU(),
-            self.l3,
-            nn.Tanh()
-        )
-        return model(state)
+	def reset(self):
+		self.X = np.ones(self.action_dim) * self.mu
 
-    def get_action(self, state):
-        action = self.forward(state)
-        return action.detach().numpy()[0, 0]
+	def sample(self):
+		dx = self.theta * (self.mu - self.X)
+		dx = dx + self.sigma * np.random.randn(len(self.X))
+		self.X = self.X + dx
+		return self.X
+
+EPS = 0.003
+
+def fanin_init(size, fanin=None):
+	fanin = fanin or size[0]
+	v = 1. / np.sqrt(fanin)
+	return torch.Tensor(size).uniform_(-v, v)
 
 class Critic(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim, init_w=3e-3):
-        super(Critic, self).__init__()
-        self.l1 = nn.Linear(state_dim, hidden_dim)
-        self.l2 = nn.Linear(hidden_dim+action_dim, hidden_dim)
-        self.l3 = nn.Linear(hidden_dim, 1)
 
-        self.l3.weight.data.uniform_(-init_w, init_w)
-        self.l3.bias.data.uniform_(-init_w, init_w)
+	def __init__(self, state_dim, action_dim):
+		"""
+		:param state_dim: Dimension of input state (int)
+		:param action_dim: Dimension of input action (int)
+		:return:
+		"""
+		super(Critic, self).__init__()
 
-    def forward(self, state, action):
-        out = self.l1(state)
-        out = F.relu(out)
-        out = self.l2(torch.cat([out, action], 1))
-        out = F.relu(out)
-        out = self.l3(out)
-        return out
+		self.state_dim = state_dim
+		self.action_dim = action_dim
+
+		self.fcs1 = nn.Linear(state_dim,256)
+		self.fcs1.weight.data = fanin_init(self.fcs1.weight.data.size())
+		self.fcs2 = nn.Linear(256,128)
+		self.fcs2.weight.data = fanin_init(self.fcs2.weight.data.size())
+
+		self.fca1 = nn.Linear(action_dim,128)
+		self.fca1.weight.data = fanin_init(self.fca1.weight.data.size())
+
+		self.fc2 = nn.Linear(256,128)
+		self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
+
+		self.fc3 = nn.Linear(128,1)
+		self.fc3.weight.data.uniform_(-EPS,EPS)
+
+	def forward(self, state, action):
+		"""
+		returns Value function Q(s,a) obtained from critic network
+		:param state: Input state (Torch Variable : [n,state_dim] )
+		:param action: Input Action (Torch Variable : [n,action_dim] )
+		:return: Value function : Q(S,a) (Torch Variable : [n,1] )
+		"""
+		s1 = F.relu(self.fcs1(state))
+		s2 = F.relu(self.fcs2(s1))
+		a1 = F.relu(self.fca1(action))
+		output = torch.cat((s2,a1),dim=1)
+
+		output = F.relu(self.fc2(output))
+		output = self.fc3(output)
+
+		return output
 
 
-env = NormalizedActions(gym.make("Pendulum-v0"))
-ou_noise = OUNoise(env.action_space)
-env.seed(args.seed)
-torch.manual_seed(args.seed)
+class Actor(nn.Module):
 
-state_dim = env.observation_space.shape[0]
-action_dim = env.action_space.shape[0]
-hidden_dim = 256
-actor = Actor(state_dim, hidden_dim,  action_dim)
-actor_target = Actor(state_dim, hidden_dim, action_dim)
-actor_target.load_state_dict(actor.state_dict())
+	def __init__(self, state_dim, action_dim, action_lim):
+		"""
+		:param state_dim: Dimension of input state (int)
+		:param action_dim: Dimension of output action (int)
+		:param action_lim: Used to limit action in [-action_lim,action_lim]
+		:return:
+		"""
+		super(Actor, self).__init__()
 
-critic = Critic(state_dim, hidden_dim, action_dim)
-critic_target = Critic(state_dim, hidden_dim, action_dim)
-critic_target.load_state_dict(critic.state_dict())
-actor_optimizer = optim.Adam(actor.parameters(), lr=1e-2)
-critic_optimizer = optim.Adam(actor.parameters(), lr=1e-3)
+		self.state_dim = state_dim
+		self.action_dim = action_dim
+		self.action_lim = action_lim
 
-memory = ReplayMemory(10000)
+		self.fc1 = nn.Linear(state_dim,256)
+		self.fc1.weight.data = fanin_init(self.fc1.weight.data.size())
+
+		self.fc2 = nn.Linear(256,128)
+		self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
+
+		self.fc3 = nn.Linear(128,64)
+		self.fc3.weight.data = fanin_init(self.fc3.weight.data.size())
+
+		self.fc4 = nn.Linear(64,action_dim)
+		self.fc4.weight.data.uniform_(-EPS,EPS)
+
+	def forward(self, state):
+		"""
+		returns policy function Pi(s) obtained from actor network
+		this function is a gaussian prob distribution for all actions
+		with mean lying in (-1,1) and sigma lying in (0,1)
+		The sampled action can , then later be rescaled
+		:param state: Input state (Torch Variable : [n,state_dim] )
+		:return: Output action (Torch Variable: [n,action_dim] )
+		"""
+		output = F.relu(self.fc1(state))
+		output = F.relu(self.fc2(output))
+		output = F.relu(self.fc3(output))
+		action = F.tanh(self.fc4(output))
+
+		action = action * float(self.action_lim)
+
+		return action
+
+class Trainer:
+
+    def __init__(self, state_dim, action_dim, action_lim, memory):
+        """
+        :param state_dim: Dimensions of state (int)
+        :param action_dim: Dimension of action (int)
+        :param action_lim: Used to limit action in [-action_lim,action_lim]
+        :param memory: replay memory buffer object
+        :return:
+        """
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.action_lim = action_lim
+        self.memory = memory
+        self.iter = 0
+        self.noise = OrnsteinUhlenbeckActionNoise(self.action_dim)
+
+        self.actor = Actor(self.state_dim, self.action_dim, self.action_lim)
+        self.target_actor = Actor(self.state_dim, self.action_dim, self.action_lim)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),LEARNING_RATE)
+
+        self.critic = Critic(self.state_dim, self.action_dim)
+        self.target_critic = Critic(self.state_dim, self.action_dim)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),LEARNING_RATE)
+
+        hard_update(self.target_actor, self.actor)
+        hard_update(self.target_critic, self.critic)
+
+    def get_exploitation_action(self, state):
+
+        action = self.target_actor.forward(state).detach()
+        return action.data.numpy()
+
+    def get_exploration_action(self, state):
+
+        action = self.actor.forward(state).detach()
+        new_action = action.data.numpy() + (self.noise.sample() * self.action_lim)
+        return new_action
+
+    def optimize(self):
+        if len(memory) < BATCH_SIZE:
+            return
+        transitions = memory.sample(BATCH_SIZE)
+        batch_state, batch_action, batch_next_state, batch_reward = zip(*transitions)
+        batch_state = Variable(torch.cat(batch_state)).view(-1,self.state_dim)
+        batch_action = Variable(torch.cat(batch_action)).view(-1,self.action_dim)
+        batch_reward = Variable(torch.cat(batch_reward)).view(-1, 1)
+        batch_next_state = Variable(torch.cat(batch_next_state)).view(-1,self.state_dim)
+
+		# ---------------------- optimize critic ----------------------
+		# Use target actor exploitation policy here for loss evaluation
+        next_action = self.target_actor(batch_next_state).detach()
+        max_next_q_values = self.target_critic(batch_next_state, next_action.detach())
+        expected_q_values = batch_reward + GAMMA * max_next_q_values
+
+         # update critic network
+        self.critic_optimizer.zero_grad()
+        current_q_values = self.critic(batch_state, batch_action)
+        critic_loss = F.smooth_l1_loss(current_q_values, expected_q_values.detach())
+        critic_loss.backward()
+        self.critic_optimizer.step()
+
+        # ---------------------- optimize actor ----------------------
+        # update actor network
+        self.actor_optimizer.zero_grad()
+        # accurate action prediction
+        current_action = self.actor(batch_state)
+        actor_loss = -torch.sum(self.critic(batch_state,current_action))
+        actor_loss.backward()
+        self.actor_optimizer.step()
+
+        soft_update(self.target_actor, self.actor, TAU)
+        soft_update(self.target_critic, self.critic, TAU)
+
+    def save_models(self, episode_count):
+        """
+        saves the target actor and critic models
+        :param episode_count: the count of episodes iterated
+        :return:
+        """
+        torch.save(self.target_actor.state_dict(), './Models/' + str(episode_count) + '_actor.pt')
+        torch.save(self.target_critic.state_dict(), './Models/' + str(episode_count) + '_critic.pt')
+        print ('Models saved successfully')
+
+    def load_models(self, episode):
+        """
+        loads the target actor and critic models, and copies them onto actor and critic models
+        :param episode: the count of episodes iterated (used to find the file name)
+        :return:
+        """
+        self.actor.load_state_dict(torch.load('./Models/' + str(episode) + '_actor.pt'))
+        self.critic.load_state_dict(torch.load('./Models/' + str(episode) + '_critic.pt'))
+        hard_update(self.target_actor, self.actor)
+        hard_update(self.target_critic, self.critic)
+        print ('Models loaded succesfully')
+
+
+env = gym.make('Pendulum-v0')
+
 MAX_EPISODES = 5000
-BATCH_SIZE = 128
-EPS_START = 0.9
-EPS_END = 0.05
-EPS_DECAY = 200
-TARGET_UPDATE = 10
-soft_tau = 1e-2
-min_value = -np.inf
-max_value = np.inf
+MAX_STEPS = 1000
+MAX_BUFFER = 1000000
+MAX_TOTAL_REWARD = 300
+S_DIM = env.observation_space.shape[0]
+A_DIM = env.action_space.shape[0]
+A_MAX = env.action_space.high[0]
 
-def update_net():
-    if len(memory) < BATCH_SIZE:
-        return
-    transitions = memory.sample(BATCH_SIZE)
-    batch_state, batch_action, batch_next_state, batch_reward, batch_done = zip(*transitions)
-    batch_state = Variable(torch.cat(batch_state)).view(-1,state_dim)
-    batch_action = Variable(torch.cat(batch_action)).view(-1,action_dim)
-    batch_reward = Variable(torch.cat(batch_reward)).view(-1, 1)
-    batch_next_state = Variable(torch.cat(batch_next_state)).view(-1, state_dim)
-    batch_done = Variable(torch.cat(batch_done)).view(-1, 1)
+memory = ReplayMemory(MAX_BUFFER)
+trainer = Trainer(S_DIM, A_DIM, A_MAX, memory)
 
-    # estimate the target q with actor_target network and critic_target network
-    next_action = actor_target(batch_next_state)
-    max_next_q_values = critic_target(batch_next_state, next_action.detach())
-    expected_q_values = batch_reward + (1.0 - batch_done) * args.gamma * max_next_q_values
-    expected_q_values = torch.clamp(expected_q_values, min_value, max_value)
+for _ep in range(MAX_EPISODES):
+    observation = env.reset()
+    print ('EPISODE :- ', _ep)
+    episode_reward = 0
+    for r in range(MAX_STEPS):
+        env.render()
+        state = np.float32(observation)
 
-    # update critic network
-    critic_optimizer.zero_grad()
-    current_q_values = critic(batch_state, batch_action)
-    critic_loss = nn.MSELoss()(current_q_values, expected_q_values.detach())
-    critic_loss.backward()
-    critic_optimizer.step()
+        action = trainer.get_exploration_action(Variable(FloatTensor(state)))
 
-    # update actor network
-    actor_optimizer.zero_grad()
-    # accurate action prediction
-    current_action = actor(batch_state)
-    actor_loss = -torch.sum(critic(batch_state,current_action))
-    actor_loss.backward()
-    actor_optimizer.step()
+        new_observation, reward, done, info = env.step(action)
+        episode_reward += reward
 
-def main():
-    steps_done = 0
-    rewards = []
-    for i_episode in range(MAX_EPISODES):
-        # Initialize the environment and state
-        state = env.reset()
-        ou_noise.reset()
-        episode_reward = 0
-        for t in range(10000):
-            # Select and perform an action
-            steps_done += 1
-            action = actor.get_action(Variable(FloatTensor([state])))
-            action = ou_noise.get_action(action, steps_done)
-            next_state, reward, done, _ = env.step(action)
-
-            # Store the transition in memory
-            transition = (FloatTensor(state), FloatTensor(action), FloatTensor(next_state), FloatTensor([reward]), FloatTensor([done]))
+        if done:
+            new_state = None
+        else:
+            new_state = np.float32(new_observation)
+            # push this exp in ram
+            transition = (FloatTensor(state), FloatTensor(action), FloatTensor(new_state), FloatTensor([reward]))
             memory.push(transition)
-            state = next_state
-            # Perform one step of the optimization (on the target network)
-            update_net()
-            episode_reward += reward
-            rewards.append(episode_reward)
-            if done:
-                break
-        if i_episode % args.log_interval == 0:
-            average_reward = sum(rewards) / len(rewards)
-            print('Episode {}\tReward: {:.2f}'.format(i_episode, average_reward))
-            rewards = []
-        # Soft update the target network
-        if i_episode % TARGET_UPDATE == 0:
-            for target_param, param in zip(critic_target.parameters(), critic.parameters()):
-                target_param.data.copy_(target_param.data * (1.0 - soft_tau) + param.data * soft_tau)
 
-            for target_param, param in zip(actor_target.parameters(), actor.parameters()):
-                target_param.data.copy_(target_param.data * (1.0 - soft_tau) + param.data * soft_tau)
-    
-    # test
-    for i_episode in range(10):
-        state = env.reset()
-        episode_reward = 0
-        for t in range(1000):
-            env.render()
-            action = actor.get_action(FloatTensor([state]))
-            state, reward, done, _ = env.step(action)
-            episode_reward += reward
-            if done:
-                print("Episode reward {} after {} timesteps".format(episode_reward, t+1))
-                break
+        observation = new_observation
 
-    env.close()
+        # perform optimization
+        trainer.optimize()
+        if done:
+            break
+    print ('REWARDS :- ', episode_reward)
 
-
-if __name__ == '__main__':
-    main()
-
-    
+    if _ep%100 == 0:
+        trainer.save_models(_ep)
