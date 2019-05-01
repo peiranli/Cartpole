@@ -1,5 +1,6 @@
 ## RLalgorithms
 
+<<<<<<< HEAD
 RL agents using various reinforcement learning algorithms.
 Test mainly on OpenAI gym environments.
 Currently, both discrete and continuous action space versions are working perfectly. 
@@ -32,3 +33,7 @@ Continuous versions can solve Pendulum in around 1000 episodes.
 - Continuous action space version
 - [pg_continuous.py](https://github.com/GaoGroupUCSD/RLalgorithms/blob/master/pg_continuous.py)
 - [PG Blog](http://karpathy.github.io/2016/05/31/rl/)
+=======
+My RL agent using various reinforcement learning algorithms.
+# RLalgorithms
+>>>>>>> 9014a67d5c7dbac42b00954fcbcb3cb964dec033
