@@ -32,6 +32,3 @@ Continuous versions can solve Pendulum in around 1000 episodes.
 - Continuous action space version
 - [pg_continuous.py](https://github.com/GaoGroupUCSD/RLalgorithms/blob/master/pg_continuous.py)
 - [PG Blog](http://karpathy.github.io/2016/05/31/rl/)
-=======
-My RL agent using various reinforcement learning algorithms.
-# RLalgorithms
