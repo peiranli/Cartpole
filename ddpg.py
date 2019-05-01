@@ -87,102 +87,93 @@ class OrnsteinUhlenbeckActionNoise:
 		self.X = self.X + dx
 		return self.X
 
-EPS = 0.003
-
-def fanin_init(size, fanin=None):
-	fanin = fanin or size[0]
-	v = 1. / np.sqrt(fanin)
-	return torch.Tensor(size).uniform_(-v, v)
+def init_weights(m):
+    if type(m) == nn.Linear:
+        nn.init.xavier_uniform_(m.weight)
+        m.bias.data.fill_(0.01)
 
 class Critic(nn.Module):
 
-	def __init__(self, state_dim, action_dim):
-		"""
-		:param state_dim: Dimension of input state (int)
-		:param action_dim: Dimension of input action (int)
-		:return:
-		"""
-		super(Critic, self).__init__()
+    def __init__(self, state_dim, action_dim):
+        """
+        :param state_dim: Dimension of input state (int)
+        :param action_dim: Dimension of input action (int)
+        :return:
+        """
+        super(Critic, self).__init__()
 
-		self.state_dim = state_dim
-		self.action_dim = action_dim
+        self.state_dim = state_dim
+        self.action_dim = action_dim
 
-		self.fcs1 = nn.Linear(state_dim,256)
-		self.fcs1.weight.data = fanin_init(self.fcs1.weight.data.size())
-		self.fcs2 = nn.Linear(256,128)
-		self.fcs2.weight.data = fanin_init(self.fcs2.weight.data.size())
+        self.fcs1 = nn.Linear(state_dim,256)
+        self.fcs2 = nn.Linear(256,128)
 
-		self.fca1 = nn.Linear(action_dim,128)
-		self.fca1.weight.data = fanin_init(self.fca1.weight.data.size())
+        self.fca1 = nn.Linear(action_dim,128)
 
-		self.fc2 = nn.Linear(256,128)
-		self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
+        self.fc2 = nn.Linear(256,128)
 
-		self.fc3 = nn.Linear(128,1)
-		self.fc3.weight.data.uniform_(-EPS,EPS)
+        self.fc3 = nn.Linear(128,1)
+        self.apply(init_weights)
 
-	def forward(self, state, action):
-		"""
-		returns Value function Q(s,a) obtained from critic network
-		:param state: Input state (Torch Variable : [n,state_dim] )
-		:param action: Input Action (Torch Variable : [n,action_dim] )
-		:return: Value function : Q(S,a) (Torch Variable : [n,1] )
-		"""
-		s1 = F.relu(self.fcs1(state))
-		s2 = F.relu(self.fcs2(s1))
-		a1 = F.relu(self.fca1(action))
-		output = torch.cat((s2,a1),dim=1)
+    def forward(self, state, action):
+        """
+        returns Value function Q(s,a) obtained from critic network
+        :param state: Input state (Torch Variable : [n,state_dim] )
+        :param action: Input Action (Torch Variable : [n,action_dim] )
+        :return: Value function : Q(S,a) (Torch Variable : [n,1] )
+        """
+        s1 = F.relu(self.fcs1(state))
+        s2 = F.relu(self.fcs2(s1))
+        a1 = F.relu(self.fca1(action))
+        output = torch.cat((s2,a1),dim=1)
 
-		output = F.relu(self.fc2(output))
-		output = self.fc3(output)
+        output = F.relu(self.fc2(output))
+        output = self.fc3(output)
 
-		return output
+        return output
 
 
 class Actor(nn.Module):
 
-	def __init__(self, state_dim, action_dim, action_lim):
-		"""
-		:param state_dim: Dimension of input state (int)
-		:param action_dim: Dimension of output action (int)
-		:param action_lim: Used to limit action in [-action_lim,action_lim]
-		:return:
-		"""
-		super(Actor, self).__init__()
+    def __init__(self, state_dim, action_dim, action_lim):
+        """
+        :param state_dim: Dimension of input state (int)
+        :param action_dim: Dimension of output action (int)
+        :param action_lim: Used to limit action in [-action_lim,action_lim]
+        :return:
+        """
+        super(Actor, self).__init__()
 
-		self.state_dim = state_dim
-		self.action_dim = action_dim
-		self.action_lim = action_lim
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.action_lim = action_lim
 
-		self.fc1 = nn.Linear(state_dim,256)
-		self.fc1.weight.data = fanin_init(self.fc1.weight.data.size())
+        self.fc1 = nn.Linear(state_dim,256)
 
-		self.fc2 = nn.Linear(256,128)
-		self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
+        self.fc2 = nn.Linear(256,128)
 
-		self.fc3 = nn.Linear(128,64)
-		self.fc3.weight.data = fanin_init(self.fc3.weight.data.size())
+        self.fc3 = nn.Linear(128,64)
 
-		self.fc4 = nn.Linear(64,action_dim)
-		self.fc4.weight.data.uniform_(-EPS,EPS)
+        self.fc4 = nn.Linear(64,action_dim)
+        self.apply(init_weights)
 
-	def forward(self, state):
-		"""
-		returns policy function Pi(s) obtained from actor network
-		this function is a gaussian prob distribution for all actions
-		with mean lying in (-1,1) and sigma lying in (0,1)
-		The sampled action can , then later be rescaled
-		:param state: Input state (Torch Variable : [n,state_dim] )
-		:return: Output action (Torch Variable: [n,action_dim] )
-		"""
-		output = F.relu(self.fc1(state))
-		output = F.relu(self.fc2(output))
-		output = F.relu(self.fc3(output))
-		action = F.tanh(self.fc4(output))
+    def forward(self, state):
+        """
+        returns policy function Pi(s) obtained from actor network
+        this function is a gaussian prob distribution for all actions
+        with mean lying in (-1,1) and sigma lying in (0,1)
+        The sampled action can , then later be rescaled
+        :param state: Input state (Torch Variable : [n,state_dim] )
+        :return: Output action (Torch Variable: [n,action_dim] )
+        """
+        output = F.relu(self.fc1(state))
+        output = F.relu(self.fc2(output))
+        output = F.relu(self.fc3(output))
+        action = F.tanh(self.fc4(output))
 
-		action = action * float(self.action_lim)
+        action = action * float(self.action_lim)
 
-		return action
+        return action
 
 class Trainer:
 
@@ -233,8 +224,8 @@ class Trainer:
         batch_reward = Variable(torch.cat(batch_reward)).view(-1, 1)
         batch_next_state = Variable(torch.cat(batch_next_state)).view(-1,self.state_dim)
 
-		# ---------------------- optimize critic ----------------------
-		# Use target actor exploitation policy here for loss evaluation
+        # ---------------------- optimize critic ----------------------
+        # Use target actor exploitation policy here for loss evaluation
         next_action = self.target_actor(batch_next_state).detach()
         max_next_q_values = self.target_critic(batch_next_state, next_action.detach())
         expected_q_values = batch_reward + GAMMA * max_next_q_values
@@ -244,6 +235,7 @@ class Trainer:
         current_q_values = self.critic(batch_state, batch_action)
         critic_loss = F.smooth_l1_loss(current_q_values, expected_q_values.detach())
         critic_loss.backward()
+        #print("critic loss",critic_loss)
         self.critic_optimizer.step()
 
         # ---------------------- optimize actor ----------------------
@@ -254,6 +246,7 @@ class Trainer:
         actor_loss = -torch.sum(self.critic(batch_state,current_action))
         actor_loss.backward()
         self.actor_optimizer.step()
+        #print("actor loss",actor_loss)
 
         soft_update(self.target_actor, self.actor, TAU)
         soft_update(self.target_critic, self.critic, TAU)

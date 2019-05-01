@@ -22,10 +22,12 @@ parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                     help='interval between training status logs (default: 50)')
 args = parser.parse_args()
 
-
 env = gym.make('CartPole-v0')
 env.seed(args.seed)
 torch.manual_seed(args.seed)
+
+STATE_DIM = env.observation_space.shape[0]
+ACTION_DIM = env.action_space.n
 
 class ReplayMemory(object):
 
@@ -53,27 +55,29 @@ ByteTensor = torch.ByteTensor
 Tensor = FloatTensor
 
 class DQN(nn.Module):
-    def __init__(self):
+    def __init__(self,state_dim,action_dim,hidden_size):
         super(DQN, self).__init__()
-        self.state_space = env.observation_space.shape[0]
-        self.action_space = env.action_space.n
-        self.l1 = nn.Linear(self.state_space, 128)
-        self.l2 = nn.Linear(128, self.action_space)
+        
+        self.l1 = nn.Linear(state_dim, hidden_size)
+        self.l2 = nn.Linear(hidden_size,hidden_size)
+        self.l3 = nn.Linear(hidden_size, action_dim)
 
     def forward(self, x):
         model = torch.nn.Sequential(
             self.l1,
             nn.ReLU(),
-            self.l2
+            self.l2,
+            nn.ReLU(),
+            self.l3
         )
         return model(x)
 
-eval_net = DQN()
-target_net = DQN()
+eval_net = DQN(STATE_DIM,ACTION_DIM,128)
+target_net = DQN(STATE_DIM,ACTION_DIM,128)
 target_net.load_state_dict(eval_net.state_dict())
 target_net.eval()
 
-optimizer = optim.Adam(eval_net.parameters(), lr=1e-3)
+optimizer = optim.Adam(eval_net.parameters(), lr=1e-2)
 memory = ReplayMemory(10000)
 BATCH_SIZE = 128
 EPS_START = 0.9

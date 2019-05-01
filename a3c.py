@@ -13,12 +13,11 @@ import gym
 # init a task generator for data fetching
 env = gym.make("CartPole-v0")
 
-## Hyper Parameters
+# Hyper Parameters
 STATE_DIM = env.observation_space.shape[0]
 ACTION_DIM = env.action_space.n
 SAMPLE_NUMS = 300
-TARGET_UPDATE = 10
-CLIP_PARAM=0.2
+TARGET_UPDATE = 20
 
 FloatTensor = torch.FloatTensor
 LongTensor = torch.LongTensor 
@@ -61,19 +60,17 @@ class ValueNetwork(nn.Module):
         out = self.fc3(out)
         return out
 
-policy_net = ActorNetwork(STATE_DIM,ACTION_DIM,64)
-target_policy_net = ActorNetwork(STATE_DIM,ACTION_DIM,64)
-target_policy_net.load_state_dict(policy_net.state_dict())
-target_policy_net.eval()
+# init value network
+value_network = ValueNetwork(STATE_DIM,1,64)
+target_value_network = ValueNetwork(STATE_DIM,1,64)
+target_value_network.load_state_dict(value_network.state_dict())
+value_network_optim = torch.optim.Adam(value_network.parameters(),lr=0.01)
 
-value_net = ValueNetwork(STATE_DIM,1,64)
-target_value_net = ValueNetwork(STATE_DIM,1,64)
-target_value_net.load_state_dict(value_net.state_dict())
-target_value_net.eval()
-
-
-policy_optimizer = torch.optim.Adam(policy_net.parameters(), lr=1e-3)
-value_optimizer = torch.optim.Adam(value_net.parameters(), lr=1e-3)
+# init actor network
+actor_network = ActorNetwork(STATE_DIM,ACTION_DIM,64)
+target_actor_network = ActorNetwork(STATE_DIM,ACTION_DIM,64)
+target_actor_network.load_state_dict(actor_network.state_dict())
+actor_network_optim = torch.optim.Adam(actor_network.parameters(),lr=0.01)
 
 def test_env(vis=False):
     state = env.reset()
@@ -81,7 +78,7 @@ def test_env(vis=False):
     done = False
     total_reward = 0
     while not done:
-        dist = policy_net(FloatTensor([state]))
+        dist = actor_network(FloatTensor([state]))
         action = dist.sample()
         next_state, reward, done, _ = env.step(action.cpu().numpy()[0])
         state = next_state
@@ -98,7 +95,7 @@ def roll_out(sample_nums):
     final_r = 0
     for step in range(sample_nums):
         states.append(state)
-        dist = policy_net(Variable(torch.Tensor([state])))
+        dist = target_actor_network(Variable(torch.Tensor([state])))
         action = dist.sample()
         actions.append(action)
         action = action.cpu().numpy()
@@ -109,8 +106,34 @@ def roll_out(sample_nums):
             is_done = True
             break
     if not is_done:
-        final_r = value_net(Variable(torch.Tensor([state])))
+        final_r = value_network(Variable(torch.Tensor([state])))
     return states,actions,rewards,step,final_r
+
+def update_network(states, actions, rewards,final_r):
+        actions_var = torch.cat(actions)
+        states_var = Variable(FloatTensor(states).view(-1,STATE_DIM))
+
+        # train actor network
+        actor_network_optim.zero_grad()
+        dist = actor_network(states_var)
+        log_probs = dist.log_prob(actions_var)
+        vs = target_value_network(states_var).detach()
+        # calculate qs
+        qs = Variable(torch.Tensor(discount_reward(rewards,0.99,final_r)))
+
+        advantages = qs - vs
+        actor_network_loss = - torch.mean(torch.sum(log_probs * advantages))
+        actor_network_loss.backward()
+        actor_network_optim.step()
+
+        # train value network
+        value_network_optim.zero_grad()
+        target_values = qs
+        values = target_value_network(states_var)
+        criterion = nn.MSELoss()
+        value_network_loss = criterion(values,target_values.unsqueeze(1))
+        value_network_loss.backward()
+        value_network_optim.step()
 
 def discount_reward(r, gamma, final_r):
     discounted_r = np.zeros_like(r)
@@ -120,44 +143,10 @@ def discount_reward(r, gamma, final_r):
         discounted_r[t] = running_add
     return discounted_r
 
-def update_network(states, actions, rewards, final_r):
-        actions_var = torch.cat(actions)
-        states_var = Variable(FloatTensor(states).view(-1,STATE_DIM))
-        # train actor network
-        policy_optimizer.zero_grad()
-        
-        vs = value_net(states_var).detach()
-        # calculate qs
-        qs = Variable(torch.Tensor(discount_reward(rewards,0.99,final_r)))
-        advantages = qs - vs
-
-        dist = policy_net(states_var)
-        log_probs = dist.log_prob(actions_var)
-        old_dist = target_policy_net(states_var)
-        old_log_probs = old_dist.log_prob(actions_var)
-
-        ratio = torch.exp(log_probs - old_log_probs)
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1.0 - CLIP_PARAM, 1.0 + CLIP_PARAM) * advantages
-
-        actor_network_loss = - torch.mean(torch.min(surr1, surr2))
-        actor_network_loss.backward()
-        policy_optimizer.step()
-
-        # train value network
-        value_optimizer.zero_grad()
-        target_values = qs
-        values = value_net(states_var)
-        criterion = nn.MSELoss()
-        value_network_loss = criterion(values,target_values.unsqueeze(1))
-        value_network_loss.backward()
-        value_optimizer.step()
-
-
 def main():
     running_reward = 10
     i_episode = 0
-    MAX_EPISODES = 5000
+    MAX_EPISODES = 3000
     early_stop = False
     test_rewards = []
     threshold_reward = env.spec.reward_threshold
@@ -174,12 +163,14 @@ def main():
             if test_reward > threshold_reward: early_stop = True
         # Update the target networks
         if i_episode % TARGET_UPDATE == 0:
-            target_value_net.load_state_dict(value_net.state_dict())
-            target_policy_net.load_state_dict(policy_net.state_dict())
+            target_value_network.load_state_dict(value_network.state_dict())
+            target_actor_network.load_state_dict(actor_network.state_dict())
         i_episode += 1
     test_env(True)
 
     env.close()
+        
+
 
 if __name__ == '__main__':
     main()
