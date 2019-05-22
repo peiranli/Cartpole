@@ -126,7 +126,7 @@ def update_network(states, actions, rewards, final_r):
         # train actor network
         policy_optimizer.zero_grad()
         
-        vs = value_net(states_var).detach()
+        vs = target_value_net(states_var).detach()
         # calculate qs
         qs = Variable(torch.Tensor(discount_reward(rewards,0.99,final_r)))
         advantages = qs - vs
