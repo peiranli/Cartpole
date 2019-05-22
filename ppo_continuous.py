@@ -139,7 +139,7 @@ def update_network(states, actions, rewards, values, final_r, log_probs, entropy
         log_probs = torch.cat(log_probs)
         # calculate qs
         qs = Variable(torch.Tensor(discount_reward(rewards,0.99,final_r))).view(-1,1)
-        advantages = qs - vs
+        advantages = qs - old_vs
         old_log_probs = old_dist.log_prob(actions_var)
 
         ratio = torch.exp(log_probs - old_log_probs)
