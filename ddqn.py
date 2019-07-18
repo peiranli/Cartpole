@@ -112,10 +112,13 @@ def update_net():
     # current Q values are estimated by NN for all actions
     current_q_values = eval_net(batch_state).gather(1, batch_action)
     # expected Q values are estimated from actions which gives maximum Q value
-    max_next_q_values = target_net(batch_next_state).detach().max(1)[0]
-    expected_q_values = batch_reward + (1.0 - batch_done) * args.gamma * max_next_q_values
+    next_q_states_values = target_net(batch_next_state)
+    max_next_q_values = next_q_states_values.detach().max(1)[0]
+    max_next_actions = next_q_states_values.detach().max(1)[1].unsqueeze(1)
+    next_q_values = next_q_states_values.gather(1, max_next_actions).squeeze(1)
+    expected_q_values = (batch_reward + (1.0 - batch_done) * args.gamma * next_q_values).unsqueeze(1)
     # loss is measured from error between current and newly expected Q values
-    loss = F.smooth_l1_loss(current_q_values, expected_q_values.unsqueeze(1))
+    loss = nn.MSELoss()(current_q_values, Variable(expected_q_values))
 
     # backpropagation of loss to NN
     optimizer.zero_grad()
