@@ -25,7 +25,9 @@ Continuous versions can solve Pendulum in around 1000 episodes.
 4. Deep Q Learning
 - Using replay memory and asynchronous update
 - [dqn.py](https://github.com/peiranli/RL/blob/master/dqn.py)
+- [ddqn.py](https://github.com/peiranli/RL/blob/master/ddqn.py)
 - [DQN Paper](https://arxiv.org/abs/1312.5602)
+- [DDQN Paper](https://arxiv.org/abs/1509.06461)
 5. Policy Gradient
 - Discrete action space version
 - [pg.py](https://github.com/peiranli/RL/blob/master/pg.py)
