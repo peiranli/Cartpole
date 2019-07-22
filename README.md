@@ -25,7 +25,7 @@ OpenAI Gym, PyTorch
 - Using replay memory and ornstein uhlenbeck noise
 - [ddpg.py](https://github.com/peiranli/RL/blob/master/ddpg.py)
 - [DDPG Paper](https://arxiv.org/abs/1509.02971)
-4. Deep Q Learning
+4. Deep Q Learning and Double Q Learning
 - Using replay memory and asynchronous update
 - [dqn.py](https://github.com/peiranli/RL/blob/master/dqn.py)
 - [ddqn.py](https://github.com/peiranli/RL/blob/master/ddqn.py)
