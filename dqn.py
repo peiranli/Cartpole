@@ -109,9 +109,9 @@ def update_net():
     batch_next_state = Variable(torch.cat(batch_next_state))
     batch_done = Variable(torch.cat(batch_done))
 
-    # current Q values are estimated by NN for all actions
+    # compute Q(s_t, a) - the model computes Q(s_t), then we select the columns of actions taken
     current_q_values = eval_net(batch_state).gather(1, batch_action)
-    # expected Q values are estimated from actions which gives maximum Q value
+    # compute target Q(s_{t+1}) for all next states and all actions, and we then take max_a { target Q(s_{t+1}) }
     max_next_q_values = target_net(batch_next_state).detach().max(1)[0]
     expected_q_values = batch_reward + (1.0 - batch_done) * args.gamma * max_next_q_values
     # loss is measured from error between current and newly expected Q values

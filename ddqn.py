@@ -109,13 +109,16 @@ def update_net():
     batch_next_state = Variable(torch.cat(batch_next_state))
     batch_done = Variable(torch.cat(batch_done))
 
-    # current Q values are estimated by NN for all actions
-    current_q_values = eval_net(batch_state).gather(1, batch_action)
-    # expected Q values are estimated from actions which gives maximum Q value
-    next_q_states_values = target_net(batch_next_state)
-    max_next_q_values = next_q_states_values.detach().max(1)[0]
+    # compute Q(s_t, a) - the model computes Q(s_t), then we select the columns of actions taken
+    current_q_states_values = eval_net(batch_state)
+    current_q_values = current_q_states_values.gather(1, batch_action)
+    next_q_states_values = eval_net(batch_next_state)
+    # compute target Q(s_{t+1}) for all next states and all actions
+    target_next_q_states_values = target_net(batch_next_state)
+    # use Q net to get next actions
     max_next_actions = next_q_states_values.detach().max(1)[1].unsqueeze(1)
-    next_q_values = next_q_states_values.gather(1, max_next_actions).squeeze(1)
+    # use target Q to get max Q values
+    next_q_values = target_next_q_states_values.gather(1, max_next_actions).squeeze(1)
     expected_q_values = (batch_reward + (1.0 - batch_done) * args.gamma * next_q_values).unsqueeze(1)
     # loss is measured from error between current and newly expected Q values
     loss = nn.MSELoss()(current_q_values, Variable(expected_q_values))
