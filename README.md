@@ -5,6 +5,9 @@ Test mainly on OpenAI gym environments.
 Currently, both discrete and continuous action space versions are working perfectly.
 Continuous versions can solve Pendulum in around 1000 episodes.
 
+Dependencies:
+OpenAI Gym, PyTorch
+
 1. Advantage Actor Critic (A2C)
 - Discrete action space version
 - [a2c.py](https://github.com/peiranli/RL/blob/master/a2c.py)
@@ -22,7 +25,7 @@ Continuous versions can solve Pendulum in around 1000 episodes.
 - Using replay memory and ornstein uhlenbeck noise
 - [ddpg.py](https://github.com/peiranli/RL/blob/master/ddpg.py)
 - [DDPG Paper](https://arxiv.org/abs/1509.02971)
-4. Deep Q Learning
+4. Deep Q Learning and Double Q Learning
 - Using replay memory and asynchronous update
 - [dqn.py](https://github.com/peiranli/RL/blob/master/dqn.py)
 - [ddqn.py](https://github.com/peiranli/RL/blob/master/ddqn.py)
